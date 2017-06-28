@@ -13,15 +13,19 @@ import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.KeyEvent;
+import android.widget.Toast;
 
 import com.google.android.glass.content.Intents;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
 import java.nio.charset.Charset;
@@ -40,13 +44,17 @@ public class LiveCardMenuActivity extends Activity {
     private static final int SPEECH_REQUEST = 2;
 
     private String spokenText;
-    private String savedPicture;
+    private ByteArrayOutputStream pictureBytes;
     private TextToSpeechController tts;
     private boolean shouldFinishOnMenuClose;
     private Socket socket;
+    private BufferedReader socketOutput;
 
-    private final String ip = "192.168.1.16";
-    private final int port = 5555;
+    public static String thread_answer = null;
+
+    private final String ip = "192.168.0.101";
+    private final int port = 9999;
+
 
 
     @Override
@@ -62,6 +70,7 @@ public class LiveCardMenuActivity extends Activity {
             public void run() {
                 try  {
                     socket = new Socket(ip, port);
+                    socketOutput = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 } catch (Exception e) {
                     String error = e.getMessage();
                     Log.d("Socket", error);
@@ -147,14 +156,18 @@ public class LiveCardMenuActivity extends Activity {
             String thumbnailPath = data.getStringExtra(Intents.EXTRA_THUMBNAIL_FILE_PATH);
             String picturePath = data.getStringExtra(Intents.EXTRA_PICTURE_FILE_PATH);
             processPictureWhenReady(picturePath);
-            savedPicture = picturePath;
 
             try
             {
                 String answer = getAnswer();
                 tts.speakTheText(answer);
-            }catch (Exception e)
-            {}
+
+                Toast.makeText(getApplicationContext(), "Answer: " + answer, Toast.LENGTH_LONG).show();
+            }
+            catch (Exception e)
+            {
+                String error = e.getMessage();
+            }
 
         }
 
@@ -173,7 +186,12 @@ public class LiveCardMenuActivity extends Activity {
         final File pictureFile = new File(picturePath);
 
         if (pictureFile.exists()) {
-            // The picture is ready; process it.
+            Bitmap bitmap = BitmapFactory.decodeFile(picturePath);
+            bitmap = Bitmap.createScaledBitmap(bitmap, 224, 224, false);
+
+            ByteArrayOutputStream pictureBytes = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, pictureBytes);
+
         } else {
             // The file does not exist yet. Before starting the file observer, you
             // can update your UI to let the user know that the application is
@@ -216,28 +234,34 @@ public class LiveCardMenuActivity extends Activity {
 
     private String getAnswer() throws Exception {
         // TODO Contact server and get reply
-        Log.d("PicturePath", savedPicture);
-        Log.d("SpokenText",spokenText);
 
         JSONObject json = prepareJson();
 
-        OutputStreamWriter out = new OutputStreamWriter(
-                socket.getOutputStream(), Charset.forName("UTF-8").newEncoder() );
+        DataOutputStream DOS = new DataOutputStream(socket.getOutputStream());
+        DOS.writeUTF(json.toString());
 
-        out.write(json.toString());
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try  {
+                    LiveCardMenuActivity.thread_answer = socketOutput.readLine();
+                    Log.e("ANSWER",LiveCardMenuActivity.answer);
+                } catch (Exception e) {
+                    String error = e.getMessage();
+                }
+            }
+        });
 
-        return "Yes";
+        thread.start();
+        thread.join();
+
+        return thread_answer;
     }
 
     private JSONObject prepareJson() throws JSONException {
-        Bitmap bitmap = BitmapFactory.decodeFile(savedPicture);
-        bitmap = Bitmap.createScaledBitmap(bitmap, 224, 224, false);
-
-        ByteArrayOutputStream imageBytes = new ByteArrayOutputStream();
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, imageBytes);
 
         JSONObject json  = new JSONObject();
-        json.put("Image",imageBytes);
+        json.put("Image",pictureBytes);
         json.put("Question", spokenText);
 
         return json;
