@@ -28,9 +28,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
-import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.List;
 
@@ -43,8 +43,9 @@ public class LiveCardMenuActivity extends Activity {
     private static final int TAKE_PICTURE_REQUEST = 1;
     private static final int SPEECH_REQUEST = 2;
 
-    private String spokenText;
-    private ByteArrayOutputStream pictureBytes;
+    private static String spokenText;
+    private static ByteArrayOutputStream pictureBytes;
+    private static String picturePath;
     private TextToSpeechController tts;
     private boolean shouldFinishOnMenuClose;
     private Socket socket;
@@ -52,9 +53,12 @@ public class LiveCardMenuActivity extends Activity {
 
     public static String thread_answer = null;
 
-    private final String ip = "192.168.0.101";
+    private final String ip = "192.168.0.100";
     private final int port = 9999;
 
+    private final int maxBytesToSend = 1024;
+
+    private static boolean connected = false;
 
 
     @Override
@@ -62,23 +66,6 @@ public class LiveCardMenuActivity extends Activity {
         super.onAttachedToWindow();
         // Open the options menu right away.
         openOptionsMenu();
-        tts = new TextToSpeechController(getApplicationContext());
-
-        Thread thread = new Thread(new Runnable() {
-
-            @Override
-            public void run() {
-                try  {
-                    socket = new Socket(ip, port);
-                    socketOutput = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                } catch (Exception e) {
-                    String error = e.getMessage();
-                    Log.d("Socket", error);
-                }
-            }
-        });
-
-        thread.start();
     }
 
     @Override
@@ -87,15 +74,50 @@ public class LiveCardMenuActivity extends Activity {
         return true;
     }
 
+    private void connect(){
+
+        Thread thread = new Thread(new Runnable() {
+
+            @Override
+            public void run() {
+                try  {
+                    socket = new Socket(ip, port);
+                    socketOutput = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                    connected = true;
+                } catch (Exception e) {
+                    String error = e.getMessage();
+                }
+            }
+        });
+        thread.start();
+
+        try {
+            thread.join();
+
+            if(connected)
+            {
+                tts = new TextToSpeechController(getApplicationContext());
+                Toast.makeText(getApplicationContext(), "Connected to server", Toast.LENGTH_LONG).show();
+            }
+            else
+            {
+                Toast.makeText(getApplicationContext(), "Unable to connect", Toast.LENGTH_LONG).show();
+            }
+        }catch (Exception e){}
+    }
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
 
-        shouldFinishOnMenuClose = true;
+        shouldFinishOnMenuClose = false;
 
         switch (item.getItemId()) {
             case R.id.action_stop:
                 // Stop the service which will unpublish the live card.
                 stopService(new Intent(this, VQAService.class));
+                return true;
+
+            case R.id.action_Connect:
+                    connect();
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
@@ -117,11 +139,15 @@ public class LiveCardMenuActivity extends Activity {
 
         Log.d("ON KEY DOWN",String.valueOf((keyCode)));
 
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_DPAD_UP
-                || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
-                || keyCode == KeyEvent.KEYCODE_DPAD_DOWN){
+        if (connected && keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
 
-            displaySpeechRecognizer();
+            takePicture();
+
+            return false;
+        }else if(!connected){
+
+            openOptionsMenu();
 
             return false;
         } else {
@@ -154,8 +180,30 @@ public class LiveCardMenuActivity extends Activity {
 
         if (requestCode == TAKE_PICTURE_REQUEST && resultCode == RESULT_OK) {
             String thumbnailPath = data.getStringExtra(Intents.EXTRA_THUMBNAIL_FILE_PATH);
-            String picturePath = data.getStringExtra(Intents.EXTRA_PICTURE_FILE_PATH);
+            picturePath = data.getStringExtra(Intents.EXTRA_PICTURE_FILE_PATH);
+            displaySpeechRecognizer();
+        }
+
+        // Speech recognition
+        else if (requestCode == SPEECH_REQUEST && resultCode == RESULT_OK) {
+            List<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            spokenText = results.get(0);
+            tts.speakTheText(spokenText);
             processPictureWhenReady(picturePath);
+        }
+
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    private void processPictureWhenReady(final String picturePath) {
+        final File pictureFile = new File(picturePath);
+
+        if (pictureFile.exists()) {
+            Bitmap bitmap = BitmapFactory.decodeFile(picturePath);
+            bitmap = Bitmap.createScaledBitmap(bitmap, 448, 448, false);
+
+            pictureBytes = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, pictureBytes);
 
             try
             {
@@ -167,30 +215,8 @@ public class LiveCardMenuActivity extends Activity {
             catch (Exception e)
             {
                 String error = e.getMessage();
+                connected = false;
             }
-
-        }
-
-        // Speech recognition
-        else if (requestCode == SPEECH_REQUEST && resultCode == RESULT_OK) {
-            List<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-            spokenText = results.get(0);
-            tts.speakTheText(spokenText);
-            takePicture();
-        }
-
-        super.onActivityResult(requestCode, resultCode, data);
-    }
-
-    private void processPictureWhenReady(final String picturePath) {
-        final File pictureFile = new File(picturePath);
-
-        if (pictureFile.exists()) {
-            Bitmap bitmap = BitmapFactory.decodeFile(picturePath);
-            bitmap = Bitmap.createScaledBitmap(bitmap, 224, 224, false);
-
-            ByteArrayOutputStream pictureBytes = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, pictureBytes);
 
         } else {
             // The file does not exist yet. Before starting the file observer, you
@@ -233,21 +259,31 @@ public class LiveCardMenuActivity extends Activity {
     }
 
     private String getAnswer() throws Exception {
-        // TODO Contact server and get reply
-
-        JSONObject json = prepareJson();
 
         DataOutputStream DOS = new DataOutputStream(socket.getOutputStream());
-        DOS.writeUTF(json.toString());
+        byte[] bytesToSend = pictureBytes.toByteArray();
+        int offset = 0;
+
+        DOS.writeUTF(spokenText);
+        // Send Length first
+        DOS.writeInt(bytesToSend.length);
+
+        while (offset < bytesToSend.length)
+        {
+            int toSend = Math.min(maxBytesToSend, bytesToSend.length - offset);
+            DOS.write(bytesToSend, offset, toSend);
+            offset += toSend;
+        }
 
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
                 try  {
                     LiveCardMenuActivity.thread_answer = socketOutput.readLine();
-                    Log.e("ANSWER",LiveCardMenuActivity.answer);
+                    Log.e("ANSWER",LiveCardMenuActivity.thread_answer);
                 } catch (Exception e) {
                     String error = e.getMessage();
+                    connected = false;
                 }
             }
         });
@@ -256,14 +292,5 @@ public class LiveCardMenuActivity extends Activity {
         thread.join();
 
         return thread_answer;
-    }
-
-    private JSONObject prepareJson() throws JSONException {
-
-        JSONObject json  = new JSONObject();
-        json.put("Image",pictureBytes);
-        json.put("Question", spokenText);
-
-        return json;
     }
 }

@@ -28,8 +28,7 @@ public class TextToSpeechController implements TextToSpeech.OnInitListener {
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                 Toast.makeText(mContext, "This Language is not supported", Toast.LENGTH_LONG).show();
             } else {
-                Toast.makeText(mContext, "Ready to Speak", Toast.LENGTH_LONG).show();
-                speakTheText("Welcome to Visual Question Answering App");
+                //speakTheText("Welcome to Visual Question Answering App");
             }
 
         } else {
